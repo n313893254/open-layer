@@ -13,6 +13,7 @@
   "dependencies": {
     "ol": "^8.1.0",
     "pinia": "^2.1.6",
+    "volar-service-vetur": "^0.0.13",
     "vue": "^3.3.4",
     "vue-router": "^4.2.4"
   },
