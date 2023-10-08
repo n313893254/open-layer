@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { onMounted } from 'vue';
-import Map from 'ol/Map';
-import View from 'ol/View';
+import { Map, View, Feature, Overlay } from 'ol';
 import { Vector, Group } from "ol/layer";
 import { Vector as SourceVector } from "ol/source";
 import { GeoJSON } from "ol/format";
-import { Text, Fill, Stroke, Style } from 'ol/style';
+import { Text, Fill, Stroke, Style, Icon } from 'ol/style';
 import { transformExtent, fromLonLat } from "ol/proj";
 import { intersects } from "ol/extent";
+import { Point } from 'ol/geom';
+import { Select } from 'ol/interaction';
+import { pointerMove } from 'ol/events/condition'
 
 import { MAP_DEFAULT_OPTIONS, EPSG4326, PROVINCES } from "@/configs/constans";
 
@@ -170,18 +172,128 @@ onMounted(() => {
       }
     }
   })
+
+  const markerLayer = new Vector({
+    source: new SourceVector(),
+  })
+  
+  const pointFeature = new Feature({
+    geometry: new Point(fromLonLat([110.1810, 22.6545])),
+    name: 'YuLin',
+  })
+
+  const markerStyle = new Style({
+    image: new Icon({
+      src: '/images/icons/marker.svg',
+      color: 'red',
+      scale: 1,
+      anchor: [0.15, 0.9],
+    })
+  })
+
+  pointFeature.setStyle(markerStyle)
+
+  markerLayer.getSource()?.addFeature(pointFeature)
+
+  map.addLayer(markerLayer)
+
+  const previewEle = document.getElementById('map-marker-preview') as HTMLElement
+
+  if (previewEle) {
+    const preview = new Overlay({
+      element: previewEle,
+      positioning: 'center-center',
+      offset: [20, -75],
+      stopEvent: false,
+    })
+
+    map.addOverlay(preview)
+
+    const interaction = new Select({
+      layers: [markerLayer],
+      condition: pointerMove,
+      style: null,
+    })
+
+    map.addInteraction(interaction)
+
+    let markerInfo: {
+      info: Record<string, any>,
+      coords: number[],
+    } = {
+      info: {},
+      coords: [],
+    }
+
+    interaction.on('select', (event) => {
+      if (event.selected.length > 0) {
+        const selectedFeature = event.selected[0]
+
+        const geometry = selectedFeature.getGeometry()
+        if (geometry instanceof Point) {
+          markerInfo.coords = geometry.getCoordinates()
+        }
+
+        map.getTargetElement().style.cursor = 'pointer'
+        preview.setPosition(markerInfo.coords)
+      } else {
+        preview.setPosition(undefined)
+        map.getTargetElement().style.cursor = 'default'
+      }
+    })
+  }
+
+
 });
 </script>
 
 <template>
   <div class="page">
-    <div id="map" />
+    <div id="map" >
+      <div id="map-marker-preview">
+        <div class="info">
+          <div class="title">
+            广西壮族自治区玉林市玉州区
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
-<style>
+<style lang="less">
 #map {
   width: 100%;
   height: 100vh;
+}
+
+#map-marker-preview {
+  display: flex;
+  box-sizing: border-box;
+  position: absolute;
+  pointer-events: none;
+  z-index: 100;
+  width: 300px;
+  height: 60px;
+  background-color: #eaeaea;
+  border-radius: 10px;
+  padding: 15px;
+  cursor: pointer;
+
+  .info {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+
+    span {
+      display: inline-block;
+    }
+
+    .title {
+      width: 100%;
+      font-size: 14px;
+      opacity: 0.8;
+    }
+  }
 }
 </style>
