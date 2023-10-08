@@ -5,13 +5,51 @@ import { Vector, Group } from "ol/layer";
 import { Vector as SourceVector } from "ol/source";
 import { GeoJSON } from "ol/format";
 import { Text, Fill, Stroke, Style, Icon } from 'ol/style';
-import { transformExtent, fromLonLat } from "ol/proj";
+import { transformExtent, fromLonLat, transform } from "ol/proj";
 import { intersects } from "ol/extent";
-import { Point } from 'ol/geom';
+import { Point, LineString, } from 'ol/geom';
 import { Select } from 'ol/interaction';
 import { pointerMove } from 'ol/events/condition'
+import { toRadians } from 'ol/math'
 
-import { MAP_DEFAULT_OPTIONS, EPSG4326, PROVINCES } from "@/configs/constans";
+import { MAP_DEFAULT_OPTIONS, EPSG4326, PROVINCES, EPSG3857 } from "@/configs/constans";
+
+const YU_LIN_COORD = [110.1810, 22.6545]
+const NAN_NING_COORD = [108.3660, 22.8172]
+const Duration = 2500;
+
+function countDegrees(startPoint: number[], endPoint: number[]) {
+  const dx = endPoint[0] - startPoint[0];
+  const dy = endPoint[1] - startPoint[1];
+
+  const radians = Math.atan2(dy, dx);
+  let degrees = radians * (180 / Math.PI);
+
+  if (degrees < 0) {
+    degrees += 360;
+  }
+
+  return degrees;
+}
+
+function interpolatePoints(
+  start: number[],
+  end: number[],
+  numPoints: number
+) {
+  const interpolatedPoints = [];
+  const stepX = (end[0] - start[0]) / (numPoints + 1);
+  const stepY = (end[1] - start[1]) / (numPoints + 1);
+
+  for (let i = 0; i < numPoints; i++) {
+    const x = start[0] + stepX * (i + 1);
+    const y = start[1] + stepY * (i + 1);
+    interpolatedPoints.push([x, y]);
+  }
+
+  return interpolatedPoints.map((c) => fromLonLat(c));
+}
+
 
 function createLayerStyle(feature: any) {
   const text = new Text({
@@ -34,7 +72,6 @@ function createLayerStyle(feature: any) {
 }
 
 function createLayer(url: string, options?: Record<string, string|number>) {
-  console.log(url, 'url')
   const layer = new Vector({
     source: new SourceVector({
       url,
@@ -46,6 +83,34 @@ function createLayer(url: string, options?: Record<string, string|number>) {
   layer.setStyle(createLayerStyle)
 
   return layer
+}
+
+function createPoint(src: string, coords?: number[], opt: Record<string, any> = {}) {
+  const layer = new Vector({
+    source: new SourceVector(),
+  });
+
+  const feature = new Feature({
+    geometry: new Point(coords ? fromLonLat(coords) : []),
+  })
+
+  const style = new Style({
+    image: new Icon({
+      src,
+      ...opt,
+    })
+  })
+
+  feature.setStyle(style)
+
+  layer.getSource()?.addFeature(feature)
+
+  map.addLayer(layer)
+
+  return {
+    layer,
+    feature,
+  }
 }
 
 enum LayerIndex {
@@ -113,7 +178,6 @@ onMounted(() => {
   map.addLayer(layerGroup);
 
   for(const province in PROVINCES) {
-    console.log(province, 'province')
     const layer = createLayer(`/geojson/china/${province}.json`, {
       renderBuffer: 100,
     })
@@ -173,29 +237,82 @@ onMounted(() => {
     }
   })
 
-  const markerLayer = new Vector({
-    source: new SourceVector(),
-  })
-  
-  const pointFeature = new Feature({
-    geometry: new Point(fromLonLat([110.1810, 22.6545])),
-    name: 'YuLin',
+  const { layer: previewLayer } = createPoint('/images/icons/marker.svg', YU_LIN_COORD, {
+    color: 'red',
+    scale: 1,
+    anchor: [0.15, 0.9],
   })
 
-  const markerStyle = new Style({
-    image: new Icon({
-      src: '/images/icons/marker.svg',
-      color: 'red',
-      scale: 1,
-      anchor: [0.15, 0.9],
+  createPoint('/images/icons/location.svg', NAN_NING_COORD, {
+    scale: 1,
+  })
+
+  const carExtent = transform(YU_LIN_COORD, EPSG3857, EPSG4326);
+  const degrees = countDegrees(NAN_NING_COORD, carExtent);
+
+  const { 
+    feature: carFeature,
+    layer: carLayer, 
+  } = createPoint('/images/icons/car.svg', undefined, {
+    scale: 0.5,
+    rotation: toRadians(45 + 360 - degrees),
+  })
+
+  const lineLayer = new Vector({
+    source: new SourceVector()
+  })
+
+  map.addLayer(lineLayer)
+
+  const coords = interpolatePoints(NAN_NING_COORD, YU_LIN_COORD, 100);
+  const lineFeature = new Feature({
+    geometry: new LineString(coords)
+  })
+
+  const random = () => Math.floor(Math.random() * 100) + 150
+  const color = `rgb(${random()}, ${random()}, ${random()})`
+
+  const lineStyle = new Style({
+    stroke: new Stroke({
+      color,
+      width: 4,
+      lineDash: [5, 10],
     })
   })
 
-  pointFeature.setStyle(markerStyle)
+  lineFeature.setStyle(lineStyle)
 
-  markerLayer.getSource()?.addFeature(pointFeature)
+  lineLayer.getSource()?.addFeature(lineFeature)
 
-  map.addLayer(markerLayer)
+  function playAnimate(
+    feature: Feature,
+    coordsList: number[][],
+    callback: Function,
+  ) {
+    let startTime = new Date().getTime()
+
+    function animate() {
+      const currentTime = new Date().getTime()
+      const elapsedTime = currentTime - startTime
+      const fraction = elapsedTime / Duration
+      const index = Math.round(coordsList.length * fraction)
+
+      if (index < coordsList.length) {
+        const geometry = feature.getGeometry()
+
+        if (geometry instanceof Point) {
+          console.log(coordsList[index], 'Point')
+          geometry?.setCoordinates(coordsList[index])
+        }
+
+        requestAnimationFrame(animate)
+      } else {
+        callback()
+      }
+    }
+
+    animate()
+  }
 
   const previewEle = document.getElementById('map-marker-preview') as HTMLElement
 
@@ -210,7 +327,7 @@ onMounted(() => {
     map.addOverlay(preview)
 
     const interaction = new Select({
-      layers: [markerLayer],
+      layers: [previewLayer],
       condition: pointerMove,
       style: null,
     })
@@ -225,6 +342,8 @@ onMounted(() => {
       coords: [],
     }
 
+    let animateDone = false
+
     interaction.on('select', (event) => {
       if (event.selected.length > 0) {
         const selectedFeature = event.selected[0]
@@ -236,14 +355,25 @@ onMounted(() => {
 
         map.getTargetElement().style.cursor = 'pointer'
         preview.setPosition(markerInfo.coords)
+
+        const line = lineFeature?.getGeometry()
+        const coordsList = line?.getCoordinates() || []
+
+        if (animateDone) {
+          carLayer.getSource()?.addFeature(carFeature)
+          animateDone = false
+        }
+
+        playAnimate(carFeature, coordsList, () => {
+          carLayer.getSource()?.removeFeature(carFeature)
+          animateDone = true
+        })
       } else {
         preview.setPosition(undefined)
         map.getTargetElement().style.cursor = 'default'
       }
     })
   }
-
-
 });
 </script>
 
@@ -251,9 +381,18 @@ onMounted(() => {
   <div class="page">
     <div id="map" >
       <div id="map-marker-preview">
+        <div class="img-box">
+          <img src="/images/preview/mid-autumn.jpeg" alt="">
+        </div>
         <div class="info">
           <div class="title">
             广西壮族自治区玉林市玉州区
+          </div>
+          <div class="desc">
+            和女朋友一起过中秋
+          </div>
+          <div class="date">
+            2023-09-30
           </div>
         </div>
       </div>
@@ -274,11 +413,23 @@ onMounted(() => {
   pointer-events: none;
   z-index: 100;
   width: 300px;
-  height: 60px;
+  height: 120px;
   background-color: #eaeaea;
   border-radius: 10px;
   padding: 15px;
   cursor: pointer;
+
+  .img-box {
+    max-width: 100px;
+    height: auto;
+    border-radius: 5px;
+    margin-right: 20px;
+    padding-bottom: 0;
+
+    img {
+      height: 100%;
+    }
+  }
 
   .info {
     display: flex;
@@ -293,6 +444,17 @@ onMounted(() => {
       width: 100%;
       font-size: 14px;
       opacity: 0.8;
+    }
+
+    .desc {
+      font-size: 12px;
+      opacity: 0.7;
+    }
+
+    .date {
+      text-align: right;
+      font-size: 12px;
+      opacity: 0.5;
     }
   }
 }
